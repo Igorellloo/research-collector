@@ -31,7 +31,7 @@ from collections import defaultdict, deque
 import aiosqlite
 
 # ── Настройки ────────────────────────────────────────────────────
-DB_PATH                 = "research.db"
+DB_PATH                 = "/tmp/research.db"
 SYMBOLS_PER_WS          = 10
 SNAPSHOT_INTERVAL_SEC   = 60       # снимок рынка раз в минуту
 SQUEEZE_CHECK_INTERVAL  = 60       # проверка сквизов раз в минуту
