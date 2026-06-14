@@ -689,6 +689,11 @@ async def squeeze_detector():
                 continue
 
             # Точка открытия окна и тики внутри
+            # Проверяем что история монеты покрывает всё окно целиком
+            oldest_tick = ph[0][0]
+            if oldest_tick > cutoff:
+                continue  # история короче SQUEEZE_WINDOW_SEC — пропускаем
+
             window_ticks = []
             price_at_open = None
             for t, p in ph:
