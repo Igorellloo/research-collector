@@ -728,6 +728,18 @@ async def squeeze_detector():
             if abs(move_pct) < SQUEEZE_THRESHOLD_PCT:
                 continue
 
+            # Диагностический лог
+            history_age_min = (now - ph[0][0]) / 60.0
+            oldest_ts_diag  = datetime.fromtimestamp(ph[0][0]).strftime('%H:%M:%S')
+            peak_ts_diag    = datetime.fromtimestamp(peak_t).strftime('%H:%M:%S')
+            print(f"{YELLOW}[squeeze:diag] {sym}"
+                  f"  open={price_at_open:.4f}"
+                  f"  peak={peak_price:.4f}"
+                  f"  peak_time={peak_ts_diag}"
+                  f"  move={move_pct:+.2f}%"
+                  f"  oldest={oldest_ts_diag}"
+                  f"  history={history_age_min:.1f}м{RESET}")
+
             _registered[sym] = now
 
             pullback_pct = (cur_price - peak_price) / peak_price * 100
