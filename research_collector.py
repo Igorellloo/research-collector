@@ -24,6 +24,7 @@ BYBIT RESEARCH COLLECTOR
 import asyncio
 import json
 import time
+import random
 import aiohttp
 import websockets
 from datetime import datetime
@@ -547,7 +548,7 @@ async def ws_spot_stream(symbols: list, valid_spot: set):
 
         except Exception as e:
             print(f"{RED}Spot WS разорван ({len(symbols)} символов): {e}, переподключение...{RESET}")
-            await asyncio.sleep(3)
+            await asyncio.sleep(3 + random.uniform(0, 10))
 
 
 # ════════════════════════════════════════════════════════════════
