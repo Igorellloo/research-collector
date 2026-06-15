@@ -40,7 +40,8 @@ SQUEEZE_WINDOW_SEC      = 5400     # окно поиска экстремума 
 SQUEEZE_COOLDOWN_SEC    = 1800     # cooldown на монету — 30 минут
 FUNDING_UPDATE_SEC      = 300      # обновление funding раз в 5 минут
 BTC_CONTEXT_UPDATE_SEC  = 300      # обновление BTC контекста раз в 5 минут
-HISTORY_DEPTH_SEC       = 7200     # глубина хранения истории в памяти — 2 часа
+HISTORY_DEPTH_SEC       = 7200
+SNAPSHOT_RETENTION_HRS  = 6      # хранить сырые снимки N часов     # глубина хранения истории в памяти — 2 часа
 # ─────────────────────────────────────────────────────────────────
 
 GREEN  = "\033[92m"
@@ -933,6 +934,56 @@ async def outcomes_worker():
 
 
 # ════════════════════════════════════════════════════════════════
+# Задача 2c: автоочистка старых снимков
+# ════════════════════════════════════════════════════════════════
+async def cleanup_snapshots():
+    """
+    Каждый час удаляет снимки старше SNAPSHOT_RETENTION_HRS часов.
+    Снимки привязанные к событиям через squeeze_features — не трогает.
+    """
+    print(f"{CYAN}[cleanup] Автоочистка снимков (хранение {SNAPSHOT_RETENTION_HRS}ч){RESET}")
+    await asyncio.sleep(300)  # первый запуск через 5 минут после старта
+    while True:
+        try:
+            cutoff_ts  = time.time() - SNAPSHOT_RETENTION_HRS * 3600
+            cutoff_str = datetime.utcfromtimestamp(cutoff_ts).strftime('%Y-%m-%d %H:%M:%S')
+
+            # Считаем сколько будет удалено
+            cur = await db.execute("""
+                SELECT COUNT(*) FROM market_snapshots
+                WHERE timestamp < ?
+                  AND timestamp NOT IN (
+                      SELECT DISTINCT snapshot_time FROM squeeze_features
+                  )
+            """, (cutoff_str,))
+            count = (await cur.fetchone())[0]
+
+            if count > 0:
+                await db.execute("""
+                    DELETE FROM market_snapshots
+                    WHERE timestamp < ?
+                      AND timestamp NOT IN (
+                          SELECT DISTINCT snapshot_time FROM squeeze_features
+                      )
+                """, (cutoff_str,))
+                await db.commit()
+
+                # Размер БД после очистки
+                cur2 = await db.execute("SELECT COUNT(*) FROM market_snapshots")
+                remaining = (await cur2.fetchone())[0]
+                print(f"{CYAN}[cleanup] Удалено {count:,} снимков  "
+                      f"Осталось: {remaining:,}  "
+                      f"Порог: {cutoff_str}{RESET}")
+            else:
+                print(f"{CYAN}[cleanup] Нечего удалять (все снимки свежее {SNAPSHOT_RETENTION_HRS}ч){RESET}")
+
+        except Exception as e:
+            print(f"{RED}[cleanup] Ошибка: {e}{RESET}")
+
+        await asyncio.sleep(3600)  # следующая проверка через час
+
+
+# ════════════════════════════════════════════════════════════════
 # Задача 3: daily_report
 # Раз в сутки в 00:00 UTC печатает сводку по накопленным данным
 # ════════════════════════════════════════════════════════════════
@@ -1049,6 +1100,7 @@ async def main():
                 squeeze_detector(),
                 daily_report(),
         outcomes_worker(),
+        cleanup_snapshots(),
             )
 
 
