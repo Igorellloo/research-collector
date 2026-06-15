@@ -35,7 +35,7 @@ DB_PATH                 = "/tmp/research.db"
 SYMBOLS_PER_WS          = 10
 SNAPSHOT_INTERVAL_SEC   = 60       # снимок рынка раз в минуту
 SQUEEZE_CHECK_INTERVAL  = 60       # проверка сквизов раз в минуту
-SQUEEZE_THRESHOLD_PCT   = 7.0     # порог движения для фиксации события
+SQUEEZE_THRESHOLD_PCT   = 10.0     # порог движения для фиксации события
 SQUEEZE_WINDOW_SEC      = 5400     # окно поиска экстремума — 90 минут
 SQUEEZE_COOLDOWN_SEC    = 1800     # cooldown на монету — 30 минут
 FUNDING_UPDATE_SEC      = 300      # обновление funding раз в 5 минут
@@ -854,42 +854,82 @@ async def _extract_features(event_id: int, sym: str, event_time: str):
 
 
 # ════════════════════════════════════════════════════════════════
-# Задача 2b: результаты ПОСЛЕ события
+# Задача 2b: фоновый цикл расчёта результатов ПОСЛЕ событий
+# Каждые 5 минут проверяет события старше 61 минуты без outcomes
 # ════════════════════════════════════════════════════════════════
 async def _fetch_outcomes(event_id: int, sym: str,
                           end_price: float, event_time: str):
-    """Ждёт 61 минуту, затем запрашивает kline и записывает результаты."""
-    await asyncio.sleep(3660)
-    entry_ts = datetime.strptime(event_time, '%Y-%m-%d %H:%M:%S').timestamp()
-    result   = await _fetch_kline_after(sym, entry_ts, end_price)
-    if not result:
-        return
-    try:
-        await db.execute("""
-            INSERT INTO squeeze_outcomes (
-                event_id, symbol, event_time, end_price,
-                price_after_15m, price_after_30m, price_after_60m,
-                move_after_15m_pct, move_after_30m_pct, move_after_60m_pct
-            ) VALUES (?,?,?,?,?,?,?,?,?,?)
-        """, (
-            event_id, sym, event_time, end_price,
-            result['price_after_15m'],
-            result['price_after_30m'],
-            result['price_after_60m'],
-            result['move_after_15m_pct'],
-            result['move_after_30m_pct'],
-            result['move_after_60m_pct'],
-        ))
-        await db.commit()
-        m15 = result['move_after_15m_pct']
-        m30 = result['move_after_30m_pct']
-        m60 = result['move_after_60m_pct']
-        print(f"{CYAN}[outcomes] event_id={event_id} {sym}  "
-              f"15m={m15:+.1f}%  30m={m30:+.1f}%  60m={m60:+.1f}%{RESET}"
-              if m15 is not None else
-              f"{CYAN}[outcomes] event_id={event_id} {sym}: записано{RESET}")
-    except Exception as e:
-        print(f"{RED}[outcomes] Ошибка event_id={event_id}: {e}{RESET}")
+    """Заглушка для совместимости — реальная обработка в outcomes_worker."""
+    pass
+
+
+async def outcomes_worker():
+    """
+    Фоновый цикл: каждые 5 минут находит события без outcomes
+    старше 61 минуты и дописывает результаты через kline API.
+    Устойчив к перезапускам — работает через БД, не через память.
+    """
+    print(f"{CYAN}[outcomes] Worker запущен (проверка каждые 5м){RESET}")
+    await asyncio.sleep(60)  # дать время БД инициализироваться
+    while True:
+        try:
+            now_ts  = time.time()
+            cutoff  = now_ts - 3660  # события старше 61 минуты
+
+            # Находим события без outcomes
+            cursor = await db.execute("""
+                SELECT e.id, e.symbol, e.end_price, e.event_time
+                FROM squeeze_events e
+                LEFT JOIN squeeze_outcomes o ON o.event_id = e.id
+                WHERE o.event_id IS NULL
+                  AND CAST(strftime('%s', e.event_time) AS REAL) < ?
+                ORDER BY e.id ASC
+                LIMIT 20
+            """, (cutoff,))
+            pending = await cursor.fetchall()
+
+            if pending:
+                print(f"{CYAN}[outcomes] Обрабатываем {len(pending)} событий...{RESET}")
+
+            for event_id, sym, end_price, event_time in pending:
+                try:
+                    entry_ts = datetime.strptime(event_time, '%Y-%m-%d %H:%M:%S').timestamp()
+                    result   = await _fetch_kline_after(sym, entry_ts, end_price)
+                    if not result:
+                        print(f"{YELLOW}[outcomes] event_id={event_id} {sym}: kline не получен{RESET}")
+                        continue
+                    await db.execute("""
+                        INSERT OR IGNORE INTO squeeze_outcomes (
+                            event_id, symbol, event_time, end_price,
+                            price_after_15m, price_after_30m, price_after_60m,
+                            move_after_15m_pct, move_after_30m_pct, move_after_60m_pct
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                    """, (
+                        event_id, sym, event_time, end_price,
+                        result['price_after_15m'],
+                        result['price_after_30m'],
+                        result['price_after_60m'],
+                        result['move_after_15m_pct'],
+                        result['move_after_30m_pct'],
+                        result['move_after_60m_pct'],
+                    ))
+                    await db.commit()
+                    m15 = result['move_after_15m_pct']
+                    m30 = result['move_after_30m_pct']
+                    m60 = result['move_after_60m_pct']
+                    if m15 is not None:
+                        print(f"{CYAN}[outcomes] ✓ event_id={event_id} {sym}  "
+                              f"15m={m15:+.1f}%  30m={m30:+.1f}%  60m={m60:+.1f}%{RESET}")
+                    else:
+                        print(f"{CYAN}[outcomes] ✓ event_id={event_id} {sym}: записано{RESET}")
+                    await asyncio.sleep(0.5)  # пауза между запросами kline
+                except Exception as e:
+                    print(f"{RED}[outcomes] Ошибка event_id={event_id} {sym}: {e}{RESET}")
+
+        except Exception as e:
+            print(f"{RED}[outcomes] Worker ошибка: {e}{RESET}")
+
+        await asyncio.sleep(300)  # следующая проверка через 5 минут
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1008,6 +1048,7 @@ async def main():
                 snapshot_collector(),
                 squeeze_detector(),
                 daily_report(),
+        outcomes_worker(),
             )
 
 
