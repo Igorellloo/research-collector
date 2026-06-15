@@ -677,6 +677,22 @@ async def squeeze_detector():
         now    = time.time()
         cutoff = now - SQUEEZE_WINDOW_SEC
 
+        # Диагностика раз в 10 итераций
+        if not hasattr(squeeze_detector, '_diag_counter'):
+            squeeze_detector._diag_counter = 0
+        squeeze_detector._diag_counter += 1
+        if squeeze_detector._diag_counter % 10 == 1:
+            total_syms = len(price_cache)
+            syms_with_history = sum(1 for s in price_cache if price_history.get(s) and len(price_history[s]) >= 2)
+            syms_ready = 0
+            for s in price_cache:
+                ph2 = price_history.get(s)
+                if ph2 and len(ph2) >= 2 and ph2[0][0] <= cutoff:
+                    syms_ready += 1
+            print(f"{CYAN}[squeeze:диаг] Всего монет: {total_syms}  "
+                  f"С историей: {syms_with_history}  "
+                  f"Готовы к анализу (90м+): {syms_ready}{RESET}")
+
         for sym in list(price_cache.keys()):
             cur_price = price_cache.get(sym, 0)
             if cur_price <= 0:
