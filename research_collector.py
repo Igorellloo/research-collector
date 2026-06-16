@@ -37,12 +37,12 @@ SYMBOLS_PER_WS          = 10
 SNAPSHOT_INTERVAL_SEC   = 60       # снимок рынка раз в минуту
 SQUEEZE_CHECK_INTERVAL  = 60       # проверка сквизов раз в минуту
 SQUEEZE_THRESHOLD_PCT   = 7.0     # порог движения для фиксации события
-SQUEEZE_WINDOW_SEC      = 5400     # окно поиска экстремума — 90 минут
+SQUEEZE_WINDOW_SEC      = 3600     # окно поиска экстремума — 60 минут
 SQUEEZE_COOLDOWN_SEC    = 1800     # cooldown на монету — 30 минут
 FUNDING_UPDATE_SEC      = 300      # обновление funding раз в 5 минут
 BTC_CONTEXT_UPDATE_SEC  = 300      # обновление BTC контекста раз в 5 минут
-HISTORY_DEPTH_SEC       = 6000     # 90м окно + 10% запас — не храним лишнее
-SNAPSHOT_RETENTION_HRS  = 6      # хранить сырые снимки N часов
+HISTORY_DEPTH_SEC       = 6000     # 60м окно + запас памяти
+SNAPSHOT_RETENTION_HRS  = 2        # хранить сырые снимки N часов
 # ─────────────────────────────────────────────────────────────────
 
 GREEN  = "\033[92m"
