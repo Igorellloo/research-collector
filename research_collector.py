@@ -37,12 +37,12 @@ SYMBOLS_PER_WS          = 10
 SNAPSHOT_INTERVAL_SEC   = 60       # снимок рынка раз в минуту
 SQUEEZE_CHECK_INTERVAL  = 60       # проверка сквизов раз в минуту
 SQUEEZE_THRESHOLD_PCT   = 7.0     # порог движения для фиксации события
-SQUEEZE_WINDOW_SEC      = 3600     # окно поиска экстремума — 60 минут
+SQUEEZE_WINDOW_SEC      = 5400     # окно поиска экстремума — 90 минут
 SQUEEZE_COOLDOWN_SEC    = 1800     # cooldown на монету — 30 минут
 FUNDING_UPDATE_SEC      = 300      # обновление funding раз в 5 минут
 BTC_CONTEXT_UPDATE_SEC  = 300      # обновление BTC контекста раз в 5 минут
-HISTORY_DEPTH_SEC       = 6000     # 60м окно + запас памяти
-SNAPSHOT_RETENTION_HRS  = 2        # хранить сырые снимки N часов
+HISTORY_DEPTH_SEC       = 5700     # 95 минут — минимум для 90м окна
+SNAPSHOT_RETENTION_HRS  = 6      # хранить сырые снимки N часов
 # ─────────────────────────────────────────────────────────────────
 
 GREEN  = "\033[92m"
@@ -58,9 +58,9 @@ BYBIT_REST      = "https://api.bybit.com"
 
 # ── In-memory хранилища ──────────────────────────────────────────
 price_cache            = {}                                        # sym → last price
-price_history          = defaultdict(lambda: deque(maxlen=2000))  # (ts, price)       ~90м горячих монет
+price_history          = defaultdict(lambda: deque(maxlen=2000))  # (ts, price)        ~33 тика/мин × 90м / 429 монет
 oi_cache               = {}                                        # sym → last OI (contracts)
-oi_history             = defaultdict(lambda: deque(maxlen=2000))  # (ts, oi_contracts) тиккер ~1/мин
+oi_history             = defaultdict(lambda: deque(maxlen=500))   # (ts, oi_contracts) тиккер раз в ~сек
 cvd_futures_history    = defaultdict(lambda: deque(maxlen=2000))  # (ts, delta_usd)
 cvd_spot_history       = defaultdict(lambda: deque(maxlen=2000))  # (ts, delta_usd)
 volume_history         = defaultdict(lambda: deque(maxlen=2000))  # (ts, notional_usd)
@@ -685,11 +685,29 @@ async def squeeze_detector():
             total_syms = len(price_cache)
             syms_with_history = sum(1 for s in price_cache if price_history.get(s) and len(price_history[s]) >= 2)
             syms_ready = 0
+            max_moves = []   # (move_pct, sym, history_min)
             for s in price_cache:
                 ph2 = price_history.get(s)
-                if ph2 and len(ph2) >= 2 and ph2[0][0] <= cutoff:
+                if not ph2 or len(ph2) < 2:
+                    continue
+                if ph2[0][0] <= cutoff:
                     syms_ready += 1
-            # Мониторинг памяти процесса
+                p_open = ph2[0][1]
+                history_age_min = (now - ph2[0][0]) / 60.0
+                if p_open > 0:
+                    prices_in_window = [p for t, p in ph2 if t > ph2[0][0]]
+                    if prices_in_window:
+                        hi   = max(prices_in_window)
+                        lo   = min(prices_in_window)
+                        pump = (hi - p_open) / p_open * 100
+                        dump = (p_open - lo) / p_open * 100
+                        max_moves.append((max(pump, dump), s, history_age_min))
+            moves_only = [m for m, s, a in max_moves]
+            gt3 = sum(1 for m in moves_only if m >= 3)
+            gt5 = sum(1 for m in moves_only if m >= 5)
+            gt7 = sum(1 for m in moves_only if m >= 7)
+            avg_move = sum(moves_only) / len(moves_only) if moves_only else 0
+            max_move = max(moves_only) if moves_only else 0
             try:
                 import resource
                 mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
@@ -699,6 +717,14 @@ async def squeeze_detector():
                   f"С историей: {syms_with_history}  "
                   f"Готовы к анализу (90м+): {syms_ready}  "
                   f"RAM: {mem_mb:.0f} MB{RESET}")
+            print(f"{CYAN}[squeeze:диаг] Движения за накопленную историю: "
+                  f">3%={gt3}  >5%={gt5}  >7%={gt7}  "
+                  f"avg={avg_move:.2f}%  max={max_move:.2f}%{RESET}")
+            # Топ-5 движений с указанием длины истории
+            top5 = sorted(max_moves, reverse=True)[:5]
+            for mv, sym_t, age_min in top5:
+                print(f"{CYAN}[squeeze:топ] {sym_t:<16} move={mv:.2f}%  "
+                      f"история={age_min:.0f}м{RESET}")
 
         for sym in list(price_cache.keys()):
             cur_price = price_cache.get(sym, 0)
@@ -749,6 +775,11 @@ async def squeeze_detector():
                 direction  = "SHORT"
                 peak_price = min_price
                 peak_t     = min_t
+
+            if abs(move_pct) >= 3.0:
+                print(f"{YELLOW}[squeeze:движение] {sym}  "
+                      f"pump={pump_pct:.2f}%  dump={dump_pct:.2f}%  "
+                      f"dom={move_pct:+.2f}%  порог={SQUEEZE_THRESHOLD_PCT}%{RESET}")
 
             if abs(move_pct) < SQUEEZE_THRESHOLD_PCT:
                 continue
@@ -1123,8 +1154,8 @@ async def main():
                 snapshot_collector(),
                 squeeze_detector(),
                 daily_report(),
-        outcomes_worker(),
-        cleanup_snapshots(),
+                outcomes_worker(),
+                cleanup_snapshots(),
             )
 
 
