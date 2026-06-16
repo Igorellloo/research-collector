@@ -58,12 +58,12 @@ BYBIT_REST      = "https://api.bybit.com"
 
 # ── In-memory хранилища ──────────────────────────────────────────
 price_cache            = {}                                        # sym → last price
-price_history          = defaultdict(lambda: deque(maxlen=6000))  # (ts, price)       ~90м горячих монет
+price_history          = defaultdict(lambda: deque(maxlen=2000))  # (ts, price)       ~90м горячих монет
 oi_cache               = {}                                        # sym → last OI (contracts)
 oi_history             = defaultdict(lambda: deque(maxlen=2000))  # (ts, oi_contracts) тиккер ~1/мин
-cvd_futures_history    = defaultdict(lambda: deque(maxlen=6000))  # (ts, delta_usd)
-cvd_spot_history       = defaultdict(lambda: deque(maxlen=6000))  # (ts, delta_usd)
-volume_history         = defaultdict(lambda: deque(maxlen=6000))  # (ts, notional_usd)
+cvd_futures_history    = defaultdict(lambda: deque(maxlen=2000))  # (ts, delta_usd)
+cvd_spot_history       = defaultdict(lambda: deque(maxlen=2000))  # (ts, delta_usd)
+volume_history         = defaultdict(lambda: deque(maxlen=2000))  # (ts, notional_usd)
 
 # Кеши для REST данных
 _funding_cache         = {}   # sym → funding_rate (float)
